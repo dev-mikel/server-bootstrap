@@ -1,0 +1,39 @@
+---
+- name: Check if IPv6 proc path exists
+  stat:
+    path: /proc/sys/net/ipv6
+  register: ipv6_proc
+
+# ---- Runtime sysctl (solo si IPv6 existe en kernel) ----
+
+- name: Create persistent sysctl configuration to disable IPv6
+  copy:
+    dest: /etc/sysctl.d/99-disable-ipv6.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      net.ipv6.conf.all.disable_ipv6 = 1
+      net.ipv6.conf.default.disable_ipv6 = 1
+      net.ipv6.conf.lo.disable_ipv6 = 1
+  when: ipv6_proc.stat.exists
+
+- name: Apply sysctl configuration
+  command: sysctl --system
+  changed_when: false
+  when: ipv6_proc.stat.exists
+
+# ---- GRUB persistente ----
+
+- name: Ensure ipv6.disable=1 is present in GRUB_CMDLINE_LINUX
+  lineinfile:
+    path: /etc/default/grub
+    regexp: '^(GRUB_CMDLINE_LINUX=".*)"'
+    line: '\1 ipv6.disable=1"'
+    backrefs: yes
+  register: grub_ipv6
+  when: "'ipv6.disable=1' not in lookup('file', '/etc/default/grub')"
+
+- name: Update GRUB if modified
+  command: update-grub
+  when: grub_ipv6 is defined and grub_ipv6.changed

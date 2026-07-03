@@ -1,0 +1,76 @@
+- name: Ensure SSH component is enabled
+  when: ssh_enabled | bool
+  block:
+
+    - name: Ensure SSH package is installed
+      ansible.builtin.apt:
+        name: "{{ ssh_package_name }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure SSH configuration directory exists
+      ansible.builtin.file:
+        path: "{{ ssh_config_directory }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy SSH hardening configuration
+      ansible.builtin.copy:
+        dest: "{{ ssh_custom_config_path }}"
+        owner: root
+        group: root
+        mode: "{{ ssh_custom_config_mode }}"
+        content: |
+          Port {{ ssh_port }}
+          PermitRootLogin {{ ssh_permit_root_login }}
+          PasswordAuthentication {{ ssh_password_authentication }}
+          PubkeyAuthentication {{ ssh_pubkey_authentication }}
+          AllowUsers {{ ssh_allowed_users | join(' ') }}
+          MaxAuthTries {{ ssh_max_auth_tries }}
+          LoginGraceTime {{ ssh_login_grace_time }}
+          X11Forwarding {{ ssh_x11_forwarding }}
+          AllowTcpForwarding {{ ssh_allow_tcp_forwarding }}
+          ClientAliveInterval {{ ssh_client_alive_interval }}
+          ClientAliveCountMax {{ ssh_client_alive_count_max }}
+      notify: Restart SSH service
+
+    - meta: flush_handlers
+
+    - name: Ensure SSH service is enabled and started
+      ansible.builtin.systemd:
+        name: "{{ ssh_service_name }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Manage firewall rules for SSH
+      when:
+        - ssh_manage_firewall | bool
+        - ssh_allowed_sources | length > 0
+      block:
+
+        - name: Ensure UFW is installed
+          ansible.builtin.apt:
+            name: "{{ ssh_firewall_package }}"
+            state: present
+            update_cache: false
+
+        - name: Ensure UFW is enabled
+          ansible.builtin.command: "{{ ssh_firewall_enable_command }}"
+          register: ssh_ufw_enable
+          changed_when: "'already enabled' not in ssh_ufw_enable.stdout"
+          failed_when: false
+
+        - name: Allow SSH from allowed sources
+          ansible.builtin.command: >
+            {{ ssh_firewall_allow_command }}
+            from {{ item }}
+            to any
+            port {{ ssh_port }}
+            proto tcp
+          loop: "{{ ssh_allowed_sources }}"
+          register: ssh_firewall_rules
+          changed_when: "'Skipping' not in ssh_firewall_rules.stdout"
+          failed_when: false

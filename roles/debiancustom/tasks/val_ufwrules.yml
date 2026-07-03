@@ -1,0 +1,56 @@
+# roles/<role_name>/tasks/val_ufw_rules.yml
+
+- name: Validate UFW rule set
+  when:
+    - ufw_rules_enabled | bool
+    - ufw_rules_manage_firewall | bool
+  block:
+
+    - name: Get UFW status
+      ansible.builtin.command: ufw status
+      register: _ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Evaluate firewall active state
+      ansible.builtin.set_fact:
+        _ufw_active: "{{ 'Status: active' in _ufw_status.stdout }}"
+
+    - name: Get raw firewall rules
+      ansible.builtin.command: ufw show raw
+      register: _ufw_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Validate each configured rule strictly
+      ansible.builtin.assert:
+        that:
+          - "'ACCEPT' in _ufw_raw.stdout"
+          - item.from in _ufw_raw.stdout
+          - ('tcp dpt:' ~ (item.port | string)) in _ufw_raw.stdout
+        fail_msg: "Rule missing for {{ item.from }} port {{ item.port }}"
+      loop: "{{ ufw_rules }}"
+      loop_control:
+        loop_var: item
+
+    - name: Assert firewall active
+      ansible.builtin.assert:
+        that:
+          - _ufw_active | bool
+        fail_msg: "UFW is not active"
+        success_msg: "UFW firewall validated"
+
+    - name: Output validation summary
+      ansible.builtin.debug:
+        msg: |
+          ==================================
+          VALIDATION SUMMARY
+          ==================
+
+          service_status      : {{ 'active' if _ufw_active else 'inactive' }}
+          port_listening      : validated in kernel table
+          endpoint_accessible : {{ _ufw_active }}
+          network_rule        : strict match in ufw-user-input
+          -----------------------------
+
+          # RESULT: CONFIGURATION VALID

@@ -1,0 +1,101 @@
+- name: Validate base variables
+  ansible.builtin.assert:
+    that:
+      - github_enabled | type_debug == "bool"
+      - github_user is string
+      - github_user | length > 0
+      - github_package_name is string
+      - github_host is string
+      - github_ssh_private_key_path is string
+      - github_ssh_public_key_path is string
+      - github_manage_firewall | type_debug == "bool"
+      - github_allowed_sources is iterable
+
+- name: Validate SSH secrets when enabled
+  ansible.builtin.assert:
+    that:
+      - github_ssh_private_key is defined
+      - github_ssh_private_key | length > 0
+      - github_ssh_public_key is defined
+      - github_ssh_public_key | length > 0
+    fail_msg: "GitHub SSH keys must be provided via vault in production."
+  when: github_enabled
+
+- name: Ensure Git package installed
+  ansible.builtin.apt:
+    name: "{{ github_package_name }}"
+    state: "{{ 'present' if github_enabled else 'absent' }}"
+    update_cache: true
+
+- name: Ensure SSH directory exists
+  ansible.builtin.file:
+    path: "{{ github_ssh_dir }}"
+    state: directory
+    owner: "{{ github_user }}"
+    group: "{{ github_user }}"
+    mode: "0700"
+  when: github_enabled
+
+- name: Deploy private SSH key
+  ansible.builtin.copy:
+    content: "{{ github_ssh_private_key }}"
+    dest: "{{ github_ssh_private_key_path }}"
+    owner: "{{ github_user }}"
+    group: "{{ github_user }}"
+    mode: "0600"
+  no_log: true
+  when: github_enabled
+
+- name: Deploy public SSH key
+  ansible.builtin.copy:
+    content: "{{ github_ssh_public_key }}"
+    dest: "{{ github_ssh_public_key_path }}"
+    owner: "{{ github_user }}"
+    group: "{{ github_user }}"
+    mode: "0644"
+  when: github_enabled
+
+- name: Configure SSH for GitHub
+  ansible.builtin.copy:
+    dest: "{{ github_ssh_config_path }}"
+    owner: "{{ github_user }}"
+    group: "{{ github_user }}"
+    mode: "0600"
+    content: |
+      Host {{ github_host }}
+        HostName {{ github_host }}
+        User git
+        IdentityFile {{ github_ssh_private_key_path }}
+        IdentitiesOnly yes
+        StrictHostKeyChecking {{ github_strict_host_key_checking }}
+  when: github_enabled
+
+- name: Ensure known_hosts entry
+  ansible.builtin.known_hosts:
+    name: "{{ github_host }}"
+    key: "{{ lookup('pipe', 'ssh-keyscan -t rsa,ecdsa,ed25519 ' + github_host) }}"
+    path: "{{ github_known_hosts_path }}"
+    state: present
+  when: github_enabled
+
+- name: Manage firewall rules
+  ansible.builtin.ufw:
+    rule: allow
+    port: "{{ github_ssh_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop: "{{ github_allowed_sources }}"
+  when:
+    - github_enabled
+    - github_manage_firewall
+
+- name: Remove firewall rules when disabled
+  ansible.builtin.ufw:
+    rule: delete
+    port: "{{ github_ssh_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop: "{{ github_allowed_sources }}"
+  when:
+    - not github_enabled
+    - github_manage_firewall

@@ -1,0 +1,104 @@
+---
+- name: ==================================
+  debug:
+    msg: "COCKPIT INSTALLATION STARTED"
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install cockpit
+  apt:
+    name: cockpit
+    state: present
+
+# -------------------------------------------------
+# SYSTEMD OVERRIDE (equivalente a systemctl edit)
+# -------------------------------------------------
+
+- name: Ensure override directory exists
+  file:
+    path: /etc/systemd/system/cockpit.socket.d
+    state: directory
+    mode: '0755'
+
+- name: Configure cockpit custom bind address and port
+  copy:
+    dest: /etc/systemd/system/cockpit.socket.d/override.conf
+    content: |
+      [Socket]
+      ListenStream=
+      ListenStream={{ cockpit_bind_ip }}:{{ cockpit_port }}
+  notify: Restart cockpit socket
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Ensure cockpit socket enabled and started
+  systemd:
+    name: cockpit.socket
+    enabled: yes
+    state: started
+
+# -------------------------------------------------
+# UFW RULES
+# -------------------------------------------------
+
+- name: Allow Cockpit VM network
+  command: >
+    ufw allow from 192.168.0.0/16 to any port 22018 proto tcp comment "COCKPIT WEB ADMIN"
+  register: ufw_vm
+  changed_when: "'added' in ufw_vm.stdout"
+
+- name: Allow Cockpit Tailscale network
+  command: >
+    ufw allow from 100.64.0.0/10 to any port 22018 proto tcp comment "COCKPIT WEB TAILSCALE"
+  register: ufw_ts
+  changed_when: "'added' in ufw_ts.stdout"
+
+- name: Allow Cockpit GCP network
+  command: >
+    ufw allow from 10.20.0.0/16 to any port 22018 proto tcp comment "COCKPIT WEB GCP"
+  register: ufw_gcp
+  changed_when: "'added' in ufw_gcp.stdout"
+
+- name: Reload UFW
+  command: ufw reload
+
+# -------------------------------------------------
+# INSTALLATION SUMMARY
+# -------------------------------------------------
+
+- name: Check cockpit socket status
+  shell: systemctl is-active cockpit.socket
+  register: cockpit_status
+  changed_when: false
+
+- name: Initialize report
+  set_fact:
+    cockpit_report: []
+    cockpit_failed: []
+
+- name: Append service result
+  set_fact:
+    cockpit_report: "{{ cockpit_report + [ 'cockpit.socket   : ' + ('PASSED' if cockpit_status.stdout == 'active' else 'FAILED') ] }}"
+    cockpit_failed: "{{ cockpit_failed + ( [] if cockpit_status.stdout == 'active' else ['cockpit.socket'] ) }}"
+
+- name: Show cockpit installation summary
+  debug:
+    msg: |
+      ==================================
+      COCKPIT INSTALLATION SUMMARY
+      ==================================
+      {% for line in cockpit_report %}
+      {{ line }}
+      {% endfor %}
+      ----------------------------------
+      RESULT: {{
+        'ALL CHECKS PASSED'
+        if cockpit_failed | length == 0
+        else 'FAILED -> ' + (cockpit_failed | join(', '))
+      }}
+      ==================================

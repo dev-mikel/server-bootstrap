@@ -1,0 +1,38 @@
+# roles/<role_name>/tasks/ufw_rules.yml
+
+- name: Manage UFW rule set
+  when:
+    - ufw_rules_enabled | bool
+    - ufw_rules_manage_firewall | bool
+  block:
+
+    - name: Ensure UFW package is installed
+      ansible.builtin.apt:
+        name: "{{ ufw_rules_package_name }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure UFW service is enabled and started
+      ansible.builtin.systemd:
+        name: "{{ ufw_rules_service_name }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Ensure UFW is enabled
+      community.general.ufw:
+        state: enabled
+
+    - name: Apply configured UFW rules
+      community.general.ufw:
+        rule: "{{ item.action }}"
+        direction: "{{ item.direction }}"
+        proto: "{{ item.protocol }}"
+        src: "{{ item.from | default(omit) }}"
+        dest: "{{ item.to | default(omit) }}"
+        port: "{{ item.port | default(omit) }}"
+        from_port: "{{ item.from_port | default(omit) }}"
+        to_port: "{{ item.to_port | default(omit) }}"
+        comment: "{{ item.comment | default(omit) }}"
+      loop: "{{ ufw_rules }}"
+      notify: Reload UFW

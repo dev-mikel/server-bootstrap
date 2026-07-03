@@ -1,0 +1,26 @@
+# =============================
+# Global Settings
+# =============================
+
+# Usuario administrador
+admin_user: ansible
+
+# Interface VPN
+tailscale_interface: "tailscale0"
+
+# =============================
+# Metrics Defaults
+# =============================
+
+node_exporter_port: 9100
+cadvisor_port: 8080
+
+promtail_version: "2.9.0"
+node_exporter_version: "1.7.0"
+
+# =============================
+# Docker Metrics Limits (default baseline)
+# =============================
+
+docker_metrics_memory_limit: "256m"
+docker_metrics_cpus: "0.5"

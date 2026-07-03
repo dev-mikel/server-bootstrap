@@ -1,0 +1,66 @@
+# ==========================================
+# REMOVE systemd-timesyncd
+# ==========================================
+
+- name: Remove systemd-timesyncd if present
+  apt:
+    name: systemd-timesyncd
+    state: absent
+  register: removed_timesyncd
+
+# ==========================================
+# INSTALL CHRONY
+# ==========================================
+
+- name: Install chrony
+  apt:
+    name: chrony
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+# ==========================================
+# DEPLOY CONFIGURATION
+# ==========================================
+
+- name: Deploy chrony configuration
+  copy:
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: '0644'
+    force: true
+    content: |
+      pool time.cloudflare.com iburst
+      pool time.google.com iburst
+      driftfile /var/lib/chrony/chrony.drift
+      rtcsync
+      makestep 1.0 3
+      maxupdateskew 100.0
+      logdir /var/log/chrony
+      port 0
+  notify: Restart chrony
+
+# ==========================================
+# ENSURE SERVICE ENABLED
+# ==========================================
+
+- name: Ensure chrony is enabled
+  systemd:
+    name: chrony
+    enabled: true
+
+# ==========================================
+# FORCE HANDLER EXECUTION BEFORE VALIDATION
+# ==========================================
+
+- meta: flush_handlers
+
+# ==========================================
+# ENSURE SERVICE RUNNING
+# ==========================================
+
+- name: Ensure chrony is running
+  systemd:
+    name: chrony
+    state: started

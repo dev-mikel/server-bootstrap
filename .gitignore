@@ -1,0 +1,63 @@
+# Ansible
+*.retry
+*.retry.*
+
+# Local and editor files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Secrets and local overrides
+*.vault
+*.vault.yml
+*.vault.yaml
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+
+# Logs and caches
+*.log
+.cache/
+
+# gitmaster additions
+docs/archive/
+archive/
+.claude/
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+out/
+.venv/
+venv/
+env/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+logs/
+tmp/
+temp/
+.vscode/*
+!.vscode/extensions.json
+.vercel/
+.terraform/
+*.tfstate*
+.cursor/
+.continue/
+secrets/
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,73 @@
+# roles/<role_name>/tasks/newrelic.yml
+
+- name: Ensure New Relic component is enabled
+  ansible.builtin.assert:
+    that:
+      - newrelic_enabled | bool
+    quiet: true
+
+- name: Ensure required packages are installed
+  ansible.builtin.apt:
+    name: "{{ newrelic_required_packages }}"
+    state: present
+    update_cache: true
+  when: newrelic_enabled | bool
+
+- name: Validate required New Relic credentials
+  ansible.builtin.assert:
+    that:
+      - newrelic_api_key | length > 0
+      - newrelic_account_id | length > 0
+    fail_msg: "New Relic API key and Account ID must be defined."
+  when: newrelic_enabled | bool
+
+- name: Check if New Relic CLI binary exists
+  ansible.builtin.stat:
+    path: "{{ newrelic_cli_path }}"
+  register: newrelic_cli_stat
+  when: newrelic_enabled | bool
+
+- name: Install New Relic CLI if not present
+  ansible.builtin.shell: >
+    curl -Ls {{ newrelic_install_script_url }} | bash
+  args:
+    creates: "{{ newrelic_cli_path }}"
+  when:
+    - newrelic_enabled | bool
+    - not newrelic_cli_stat.stat.exists
+
+- name: Gather installed packages
+  ansible.builtin.package_facts:
+  when: newrelic_enabled | bool
+
+- name: Install New Relic Infrastructure Agent using CLI (no profile dependency)
+  ansible.builtin.command: >
+    {{ newrelic_cli_path }} install -y
+    --tag {{ newrelic_install_tag }}
+  environment:
+    NEW_RELIC_API_KEY: "{{ newrelic_api_key }}"
+    NEW_RELIC_ACCOUNT_ID: "{{ newrelic_account_id }}"
+    NEW_RELIC_REGION: "{{ newrelic_region }}"
+  args:
+    creates: "{{ newrelic_config_path }}"
+  when:
+    - newrelic_enabled | bool
+    - newrelic_package_name not in ansible_facts.packages
+
+- name: Ensure New Relic service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ newrelic_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: newrelic_enabled | bool
+
+- name: Ensure outbound firewall rule for HTTPS is configured when enabled
+  ansible.builtin.command: >
+    ufw allow out {{ newrelic_port }}/tcp
+  register: newrelic_ufw_allow
+  changed_when: "'Rule added' in newrelic_ufw_allow.stdout"
+  failed_when: false
+  when:
+    - newrelic_enabled | bool
+    - newrelic_manage_firewall | bool

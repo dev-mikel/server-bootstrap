@@ -1,0 +1,6 @@
+- name: dev01
+  hosts: all
+  become: true
+
+  roles:
+    - infra_base

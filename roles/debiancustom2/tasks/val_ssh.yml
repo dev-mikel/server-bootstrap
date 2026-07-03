@@ -1,0 +1,222 @@
+---
+
+# ==========================================
+# SSH HARDENING + RUNTIME VALIDATION
+# ==========================================
+
+- name: Initialize SSH validation state
+  ansible.builtin.set_fact:
+    ssh_failed: []
+    ssh_report: []
+
+# ------------------------------------------
+# SERVICE STATUS
+# ------------------------------------------
+
+- name: Get SSH service status
+  ansible.builtin.systemd:
+    name: "{{ ssh_service_name }}"
+  register: ssh_service_status
+
+- name: Set service status fact
+  ansible.builtin.set_fact:
+    service_status: "{{ ssh_service_status.status.ActiveState | default('unknown') }}"
+
+- name: Record service status result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['Service ActiveState      : ' ~ service_status] }}"
+    ssh_failed: "{{ ssh_failed + ['Service']
+      if service_status != 'active'
+      else ssh_failed }}"
+
+# ------------------------------------------
+# EFFECTIVE CONFIGURATION
+# ------------------------------------------
+
+- name: Get effective SSH configuration
+  ansible.builtin.command: sshd -T
+  register: sshd_config
+  changed_when: false
+  failed_when: sshd_config.rc != 0
+
+- name: Normalize sshd output
+  ansible.builtin.set_fact:
+    sshd_output: "{{ sshd_config.stdout | lower }}"
+
+# ------------------------------------------
+# HARDENING CHECKS
+# ------------------------------------------
+
+- name: Validate PermitRootLogin
+  ansible.builtin.set_fact:
+    ssh_permit_valid: "{{ 'permitrootlogin ' ~ ssh_permit_root_login in sshd_output }}"
+
+- name: Record PermitRootLogin result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['PermitRootLogin          : ' ~ ('PASSED' if ssh_permit_valid else 'FAILED')] }}"
+    ssh_failed: "{{ ssh_failed + ['PermitRootLogin']
+      if not ssh_permit_valid
+      else ssh_failed }}"
+
+- name: Validate PasswordAuthentication
+  ansible.builtin.set_fact:
+    ssh_password_valid: "{{ 'passwordauthentication ' ~ ssh_password_authentication in sshd_output }}"
+
+- name: Record PasswordAuthentication result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['PasswordAuthentication   : ' ~ ('PASSED' if ssh_password_valid else 'FAILED')] }}"
+    ssh_failed: "{{ ssh_failed + ['PasswordAuthentication']
+      if not ssh_password_valid
+      else ssh_failed }}"
+
+- name: Validate PubkeyAuthentication
+  ansible.builtin.set_fact:
+    ssh_pubkey_valid: "{{ 'pubkeyauthentication ' ~ ssh_pubkey_authentication in sshd_output }}"
+
+- name: Record PubkeyAuthentication result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['PubkeyAuthentication     : ' ~ ('PASSED' if ssh_pubkey_valid else 'FAILED')] }}"
+    ssh_failed: "{{ ssh_failed + ['PubkeyAuthentication']
+      if not ssh_pubkey_valid
+      else ssh_failed }}"
+
+- name: Extract MaxAuthTries safely
+  ansible.builtin.set_fact:
+    ssh_maxauth_list: "{{ sshd_output | regex_findall('maxauthtries\\s+(\\d+)') }}"
+
+- name: Normalize MaxAuthTries value
+  ansible.builtin.set_fact:
+    ssh_maxauth_current: "{{ (ssh_maxauth_list | first | default('0')) | int }}"
+
+- name: Validate MaxAuthTries
+  ansible.builtin.set_fact:
+    ssh_maxauth_valid: "{{ (ssh_maxauth_current | int) == (ssh_max_auth_tries | int) }}"
+
+- name: Record MaxAuthTries result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['MaxAuthTries             : ' ~ ('PASSED' if ssh_maxauth_valid else 'FAILED')] }}"
+    ssh_failed: "{{ ssh_failed + ['MaxAuthTries']
+      if not ssh_maxauth_valid
+      else ssh_failed }}"
+
+- name: Validate X11Forwarding
+  ansible.builtin.set_fact:
+    ssh_x11_valid: "{{ 'x11forwarding ' ~ ssh_x11_forwarding in sshd_output }}"
+
+- name: Record X11Forwarding result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['X11Forwarding            : ' ~ ('PASSED' if ssh_x11_valid else 'FAILED')] }}"
+    ssh_failed: "{{ ssh_failed + ['X11Forwarding']
+      if not ssh_x11_valid
+      else ssh_failed }}"
+
+- name: Validate SSH Port configuration
+  ansible.builtin.set_fact:
+    ssh_port_valid: "{{ 'port ' ~ ssh_port | string in sshd_output }}"
+
+- name: Record SSH Port result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['Configured Port          : ' ~ ('PASSED' if ssh_port_valid else 'FAILED')] }}"
+    ssh_failed: "{{ ssh_failed + ['Port']
+      if not ssh_port_valid
+      else ssh_failed }}"
+
+# ------------------------------------------
+# RUNTIME CHECKS
+# ------------------------------------------
+
+- name: Check SSH port listening
+  ansible.builtin.command: ss -ltn sport = :{{ ssh_port }}
+  register: ssh_port_check
+  changed_when: false
+  failed_when: false
+
+- name: Set port listening fact
+  ansible.builtin.set_fact:
+    port_listening: "{{ 'LISTEN' if ssh_port_check.stdout | length > 0 else 'NOT_LISTENING' }}"
+
+- name: Record port listening result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['Port Listening           : ' ~ port_listening] }}"
+    ssh_failed: "{{ ssh_failed + ['PortListening']
+      if port_listening != 'LISTEN'
+      else ssh_failed }}"
+
+- name: Validate endpoint accessibility
+  ansible.builtin.wait_for:
+    host: "{{ ssh_bind_address }}"
+    port: "{{ ssh_port }}"
+    timeout: 5
+  register: ssh_endpoint
+  failed_when: false
+
+- name: Set endpoint accessibility fact
+  ansible.builtin.set_fact:
+    endpoint_accessible: >-
+      {{
+        'OK'
+        if (ssh_endpoint.state is defined and ssh_endpoint.state == 'started')
+        else 'FAILED'
+      }}
+
+- name: Record endpoint result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['Endpoint Accessible      : ' ~ endpoint_accessible] }}"
+    ssh_failed: "{{ ssh_failed + ['Endpoint']
+      if endpoint_accessible != 'OK'
+      else ssh_failed }}"
+
+# ------------------------------------------
+# FIREWALL CHECK (OPTIONAL)
+# ------------------------------------------
+
+- name: Get firewall status
+  ansible.builtin.command: "{{ ssh_firewall_status_command }}"
+  when: ssh_manage_firewall | bool
+  register: ssh_firewall_status
+  changed_when: false
+  failed_when: false
+
+- name: Set firewall rule state
+  ansible.builtin.set_fact:
+    network_rule: >-
+      {% if ssh_manage_firewall | bool %}
+      {{ 'PRESENT' if ssh_firewall_status.stdout is search(ssh_port | string) else 'MISSING' }}
+      {% else %}
+      NOT_MANAGED
+      {% endif %}
+
+- name: Record firewall result
+  ansible.builtin.set_fact:
+    ssh_report: "{{ ssh_report + ['Firewall Rule            : ' ~ network_rule] }}"
+    ssh_failed: "{{ ssh_failed + ['Firewall']
+      if ssh_manage_firewall | bool and network_rule != 'PRESENT'
+      else ssh_failed }}"
+
+# ------------------------------------------
+# ASSERTION
+# ------------------------------------------
+
+- name: Assert SSH validation
+  ansible.builtin.assert:
+    that:
+      - ssh_failed | length == 0
+    fail_msg: "SSH validation failed: {{ ssh_failed | join(', ') }}"
+    success_msg: "SSH validation passed"
+
+# ------------------------------------------
+# STRUCTURED SUMMARY
+# ------------------------------------------
+
+- name: Output validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================
+      service_status      : {{ service_status }}
+      port_listening      : {{ port_listening }}
+      endpoint_accessible : {{ endpoint_accessible }}
+      network_rule        : {{ network_rule }}
+      -----------------------------
+      # RESULT: CONFIGURATION VALID

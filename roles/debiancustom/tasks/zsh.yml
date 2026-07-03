@@ -1,0 +1,73 @@
+# roles/infra_base/tasks/shell_zsh.yml
+
+- name: Stop execution if component disabled
+  ansible.builtin.meta: end_host
+  when: not shell_zsh_enabled
+
+- name: Ensure required packages are installed
+  ansible.builtin.apt:
+    name: "{{ shell_zsh_packages }}"
+    state: present
+    update_cache: true
+
+- name: Ensure zsh binary exists
+  ansible.builtin.stat:
+    path: "{{ shell_zsh_zsh_path }}"
+  register: zsh_binary
+
+- name: Validate zsh binary presence
+  ansible.builtin.assert:
+    that:
+      - zsh_binary.stat.exists
+
+- name: Ensure installation directory exists
+  ansible.builtin.file:
+    path: "{{ shell_zsh_install_path }}"
+    state: directory
+    mode: "0755"
+
+- name: Check installed oh-my-posh version
+  ansible.builtin.command: "{{ shell_zsh_install_path }}/{{ shell_zsh_binary_name }} version"
+  register: omp_version_check
+  failed_when: false
+  changed_when: false
+
+- name: Download oh-my-posh binary if version mismatch or missing
+  ansible.builtin.get_url:
+    url: "{{ shell_zsh_oh_my_posh_url }}"
+    dest: "{{ shell_zsh_install_path }}/{{ shell_zsh_binary_name }}"
+    mode: "0755"
+    force: true
+  when: >
+    omp_version_check.rc != 0 or
+    (shell_zsh_oh_my_posh_version != "latest" and
+     shell_zsh_oh_my_posh_version not in omp_version_check.stdout)
+
+- name: Ensure theme directory exists
+  ansible.builtin.file:
+    path: "{{ shell_zsh_theme_path | dirname }}"
+    state: directory
+    owner: "{{ shell_zsh_user }}"
+    group: "{{ shell_zsh_user }}"
+    mode: "0755"
+
+- name: Deploy oh-my-posh theme from controller
+  ansible.builtin.copy:
+    src: "{{ shell_zsh_theme_src }}"
+    dest: "{{ shell_zsh_theme_path }}"
+    owner: "{{ shell_zsh_user }}"
+    group: "{{ shell_zsh_user }}"
+    mode: "0644"
+
+- name: Deploy parametrized .zshrc
+  ansible.builtin.template:
+    src: "zshrc.j2"
+    dest: "{{ shell_zsh_user_home }}/.zshrc"
+    owner: "{{ shell_zsh_user }}"
+    group: "{{ shell_zsh_user }}"
+    mode: "0644"
+
+- name: Ensure zsh is default shell
+  ansible.builtin.user:
+    name: "{{ shell_zsh_user }}"
+    shell: "{{ shell_zsh_zsh_path }}"

@@ -1,0 +1,182 @@
+---
+- name: Assert Debian Linux
+  ansible.builtin.assert:
+    that:
+      - ansible_system == "Linux"
+      - ansible_distribution == "Debian"
+    fail_msg: "Only Debian Linux supported."
+
+- name: Assert nodejs_version defined
+  ansible.builtin.assert:
+    that:
+      - nodejs_version | length > 0
+    fail_msg: "nodejs_version must be defined."
+
+- name: Validate package manager exclusivity
+  ansible.builtin.assert:
+    that:
+      - not (nodejs_install_npm | bool and nodejs_install_pnpm | bool)
+    fail_msg: "npm and pnpm cannot both be enabled."
+
+# ==================================================
+# Detect architecture safely (NO whitespace risk)
+# ==================================================
+
+- name: Map architecture
+  ansible.builtin.set_fact:
+    node_arch_detected: "{{ arch_map[ansible_architecture] | default('unsupported') }}"
+  vars:
+    arch_map:
+      x86_64: x64
+      aarch64: arm64
+      arm64: arm64
+      ppc64le: ppc64le
+      s390x: s390x
+
+- name: Assert supported architecture
+  ansible.builtin.assert:
+    that:
+      - node_arch_detected != "unsupported"
+    fail_msg: "Unsupported architecture: {{ ansible_architecture }}"
+
+# ==================================================
+# Define paths (fully deterministic)
+# ==================================================
+
+- name: Define Node paths
+  ansible.builtin.set_fact:
+    node_install_dir: "/usr/local/node-v{{ nodejs_version }}-linux-{{ node_arch_detected }}"
+    node_tarball: "/tmp/node-v{{ nodejs_version }}-linux-{{ node_arch_detected }}.tar.xz"
+    node_download_url: "https://nodejs.org/dist/v{{ nodejs_version }}/node-v{{ nodejs_version }}-linux-{{ node_arch_detected }}.tar.xz"
+
+# ==================================================
+# Cleanup previous install (optional)
+# ==================================================
+
+- name: Remove existing symlinks
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/node
+    - /usr/local/bin/npm
+    - /usr/local/bin/npx
+    - /usr/local/bin/corepack
+  when: nodejs_force_install | bool
+
+# ==================================================
+# Download & extract
+# ==================================================
+
+- name: Download Node binary
+  ansible.builtin.get_url:
+    url: "{{ node_download_url }}"
+    dest: "{{ node_tarball }}"
+    mode: "0644"
+
+- name: Extract Node
+  ansible.builtin.unarchive:
+    src: "{{ node_tarball }}"
+    dest: /usr/local
+    remote_src: true
+    creates: "{{ node_install_dir }}"
+
+# ==================================================
+# Symlinks
+# ==================================================
+
+- name: Symlink node
+  ansible.builtin.file:
+    src: "{{ node_install_dir }}/bin/node"
+    dest: /usr/local/bin/node
+    state: link
+    force: true
+
+- name: Symlink npm
+  ansible.builtin.file:
+    src: "{{ node_install_dir }}/bin/npm"
+    dest: /usr/local/bin/npm
+    state: link
+    force: true
+  when: nodejs_install_npm | bool
+
+- name: Symlink npx
+  ansible.builtin.file:
+    src: "{{ node_install_dir }}/bin/npx"
+    dest: /usr/local/bin/npx
+    state: link
+    force: true
+  when: nodejs_install_npm | bool
+
+- name: Symlink corepack
+  ansible.builtin.file:
+    src: "{{ node_install_dir }}/bin/corepack"
+    dest: /usr/local/bin/corepack
+    state: link
+    force: true
+
+# ==================================================
+# NPM VERSION CONTROL
+# ==================================================
+
+- name: Upgrade npm to latest
+  ansible.builtin.command: npm install -g npm@latest
+  changed_when: false
+  when:
+    - nodejs_install_npm | bool
+    - npm_version == "latest"
+
+- name: Install specific npm version
+  ansible.builtin.command: npm install -g npm@{{ npm_version }}
+  changed_when: false
+  when:
+    - nodejs_install_npm | bool
+    - npm_version | length > 0
+    - npm_version != "latest"
+
+# ==================================================
+# PNPM
+# ==================================================
+
+- name: Enable corepack
+  ansible.builtin.command: corepack enable
+  changed_when: false
+  when: nodejs_install_pnpm | bool
+
+- name: Activate pnpm latest
+  ansible.builtin.command: corepack prepare pnpm@latest --activate
+  changed_when: false
+  when:
+    - nodejs_install_pnpm | bool
+    - pnpm_version | length == 0
+
+- name: Activate pnpm specific
+  ansible.builtin.command: corepack prepare pnpm@{{ pnpm_version }} --activate
+  changed_when: false
+  when:
+    - nodejs_install_pnpm | bool
+    - pnpm_version | length > 0
+
+# ==================================================
+# Validation commands
+# ==================================================
+
+- name: Get node version
+  ansible.builtin.command: node -v
+  register: node_version_output
+  changed_when: false
+  failed_when: node_version_output.stdout != "v{{ nodejs_version }}"
+
+- name: Get npm version
+  ansible.builtin.command: npm -v
+  register: npm_version_output
+  changed_when: false
+  failed_when: npm_version_output.rc != 0
+  when: nodejs_install_npm | bool
+
+- name: Get pnpm version
+  ansible.builtin.command: pnpm -v
+  register: pnpm_version_output
+  changed_when: false
+  failed_when: pnpm_version_output.rc != 0
+  when: nodejs_install_pnpm | bool

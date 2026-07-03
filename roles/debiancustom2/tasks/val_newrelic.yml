@@ -1,0 +1,88 @@
+# roles/<role_name>/tasks/val_newrelic.yml
+
+- name: Initialize validation facts
+  ansible.builtin.set_fact:
+    service_status: "unknown"
+    port_listening: "unknown"
+    endpoint_accessible: "unknown"
+    network_rule: "not_managed"
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Set service status fact safely
+  ansible.builtin.set_fact:
+    service_status: >-
+      {{
+        ansible_facts.services[newrelic_service_name + '.service'].state
+        if (newrelic_service_name + '.service') in ansible_facts.services
+        else 'not_found'
+      }}
+
+- name: Check that no inbound port is listening on configured port
+  ansible.builtin.shell: >
+    ss -tuln | grep -w ':{{ newrelic_port }} ' || true
+  register: newrelic_port_check
+  changed_when: false
+
+- name: Set port listening result
+  ansible.builtin.set_fact:
+    port_listening: "{{ 'not_listening' if newrelic_port_check.stdout == '' else 'listening' }}"
+
+- name: Check outbound connectivity to New Relic endpoint
+  ansible.builtin.command: >
+    timeout 5 bash -c "echo > /dev/tcp/{{ newrelic_endpoint }}/{{ newrelic_port }}"
+  register: newrelic_connectivity
+  changed_when: false
+  failed_when: false
+
+- name: Set endpoint accessibility result
+  ansible.builtin.set_fact:
+    endpoint_accessible: "{{ 'reachable' if newrelic_connectivity.rc == 0 else 'unreachable' }}"
+
+- name: Check firewall status when managed
+  ansible.builtin.command: ufw status
+  register: newrelic_ufw_status
+  changed_when: false
+  failed_when: false
+  when: newrelic_manage_firewall | bool
+
+- name: Set network rule result deterministically
+  ansible.builtin.set_fact:
+    network_rule: "{{ 'not_managed' if not newrelic_manage_firewall | bool else ('configured' if (newrelic_ufw_status is defined and newrelic_ufw_status.stdout is defined and (newrelic_port | string) in newrelic_ufw_status.stdout) else 'not_configured') }}"
+
+
+- name: Assert service is running
+  ansible.builtin.assert:
+    that:
+      - service_status == "running"
+
+- name: Assert no inbound port is listening
+  ansible.builtin.assert:
+    that:
+      - port_listening == "not_listening"
+
+- name: Assert endpoint is reachable
+  ansible.builtin.assert:
+    that:
+      - endpoint_accessible == "reachable"
+
+- name: Assert firewall rule when managed
+  ansible.builtin.assert:
+    that:
+      - network_rule in ['configured', 'not_managed']
+
+- name: Output validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================
+
+      service_status      : {{ service_status }}
+      port_listening      : {{ port_listening }}
+      endpoint_accessible : {{ endpoint_accessible }}
+      network_rule        : {{ network_rule }}
+      -----------------------------
+
+      # RESULT: CONFIGURATION VALID

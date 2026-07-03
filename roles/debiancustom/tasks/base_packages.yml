@@ -1,0 +1,54 @@
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Full upgrade (dist-upgrade)
+  ansible.builtin.apt:
+    upgrade: dist
+
+- name: Autoremove unused packages
+  ansible.builtin.apt:
+    autoremove: yes
+
+- name: Autoclean apt cache
+  ansible.builtin.apt:
+    autoclean: yes
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - openssh-server
+      - openssh-client
+      - git
+      - unzip
+      - curl
+      - ca-certificates
+      - gnupg
+      - nano
+      - locales-all
+      - tmux
+      - tree
+      - bpytop
+      - ufw
+    state: present
+
+- name: Ensure essential services are enabled and running
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - ssh
+    - ufw
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Autoremove unused packages
+  ansible.builtin.apt:
+    autoremove: yes
+
+- name: Autoclean apt cache
+  ansible.builtin.apt:
+    autoclean: yes

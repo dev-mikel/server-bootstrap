@@ -1,0 +1,34 @@
+---
+- name: Assert exact Node version
+  ansible.builtin.assert:
+    that:
+      - node_version_output.stdout == "v{{ nodejs_version }}"
+    fail_msg: "Node version mismatch."
+
+- name: Assert npm active
+  ansible.builtin.assert:
+    that:
+      - npm_version_output.stdout is match("^[0-9]+")
+    fail_msg: "npm not working."
+  when: nodejs_install_npm | bool
+
+- name: Assert pnpm active
+  ansible.builtin.assert:
+    that:
+      - pnpm_version_output.stdout is match("^[0-9]+")
+    fail_msg: "pnpm not working."
+  when: nodejs_install_pnpm | bool
+
+- name: Validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================================
+      - Node version: v{{ nodejs_version }}
+      - Architecture: {{ node_arch_detected }}
+      - npm enabled: {{ nodejs_install_npm }}
+      - pnpm enabled: {{ nodejs_install_pnpm }}
+      ----------------------------------
+      RESULT: CONFIGURATION VALID
+      ==================================

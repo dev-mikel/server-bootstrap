@@ -1,0 +1,120 @@
+# roles/github/tasks/val_github.yml
+
+- name: Validate role preconditions
+  ansible.builtin.assert:
+    that:
+      - github_enabled | type_debug == "bool"
+
+# ------------------------------------------------
+# Git binary validation
+# ------------------------------------------------
+
+- name: Check Git installation
+  ansible.builtin.command: git --version
+  register: git_check
+  changed_when: false
+  failed_when: false
+
+- name: Set service status
+  ansible.builtin.set_fact:
+    service_status: "{{ 'installed' if git_check.rc == 0 else 'not-installed' }}"
+
+- name: Validate Git installation when enabled
+  ansible.builtin.assert:
+    that:
+      - not github_enabled or service_status == "installed"
+    fail_msg: "Git is not installed but github_enabled is true."
+
+# ------------------------------------------------
+# known_hosts validation
+# ------------------------------------------------
+
+- name: Ensure known_hosts file exists
+  ansible.builtin.stat:
+    path: "{{ github_known_hosts_path }}"
+  register: known_hosts_stat
+  become: true
+  become_user: "{{ github_user }}"
+  when: github_enabled
+
+- name: Validate known_hosts presence when enabled
+  ansible.builtin.assert:
+    that:
+      - known_hosts_stat.stat.exists
+    fail_msg: "known_hosts file is missing for GitHub validation."
+  when: github_enabled
+
+# ------------------------------------------------
+# SSH connectivity validation (OUTBOUND to GitHub)
+# ------------------------------------------------
+
+- name: Test SSH auth to GitHub
+  ansible.builtin.command: >
+    ssh
+    -o BatchMode=yes
+    -o StrictHostKeyChecking=yes
+    -o UserKnownHostsFile={{ github_known_hosts_path }}
+    -i {{ github_ssh_private_key_path }}
+    git@{{ github_host }} -T
+  register: endpoint_check
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ github_user }}"
+  when: github_enabled
+
+- name: Validate SSH connectivity when enabled
+  ansible.builtin.assert:
+    that:
+      - not github_enabled or endpoint_check.rc in [0, 1]
+    fail_msg: >
+      GitHub SSH authentication failed.
+      Return code: {{ endpoint_check.rc }}
+      STDOUT: {{ endpoint_check.stdout }}
+      STDERR: {{ endpoint_check.stderr }}
+  when: github_enabled
+
+# ------------------------------------------------
+# Firewall validation (if managed)
+# ------------------------------------------------
+
+- name: Check firewall configuration when managed
+  ansible.builtin.command: ufw status
+  register: firewall_status
+  changed_when: false
+  failed_when: false
+  when: github_manage_firewall
+
+- name: Validate firewall rules when managed
+  ansible.builtin.assert:
+    that:
+      - github_allowed_sources | length == 0 or
+        (
+          github_allowed_sources
+          | map('string')
+          | select('in', firewall_status.stdout)
+          | list
+          | length
+          == github_allowed_sources | length
+        )
+    fail_msg: "Firewall rules for GitHub SSH are missing or incomplete."
+  when:
+    - github_enabled
+    - github_manage_firewall
+
+# ------------------------------------------------
+# Validation summary
+# ------------------------------------------------
+
+- name: Output validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================================
+
+      service_status      : {{ service_status }}
+      endpoint_rc         : {{ endpoint_check.rc if github_enabled else 'N/A' }}
+      firewall_managed    : {{ github_manage_firewall }}
+      ----------------------------------
+      RESULT: CONFIGURATION VALID

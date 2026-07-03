@@ -1,0 +1,131 @@
+---
+- name: ==================================
+  debug:
+    msg: "COCKPIT VALIDATION STARTED"
+
+- name: Initialize validation variables
+  set_fact:
+    cockpit_report: []
+    cockpit_failed: []
+
+# -----------------------
+# PACKAGE
+# -----------------------
+
+- name: Check cockpit package
+  shell: dpkg -l | grep -w cockpit
+  register: cockpit_pkg
+  changed_when: false
+  failed_when: false
+
+# -----------------------
+# SERVICE
+# -----------------------
+
+- name: Check cockpit socket
+  shell: systemctl is-active cockpit.socket
+  register: cockpit_status
+  changed_when: false
+  failed_when: false
+
+# -----------------------
+# PORT
+# -----------------------
+
+- name: Check cockpit socket listening on 22018
+  shell: systemctl show cockpit.socket -p Listen | grep 22018
+  register: cockpit_port
+  changed_when: false
+  failed_when: false
+
+# -----------------------
+# UFW
+# -----------------------
+
+- name: Check UFW status
+  shell: ufw status
+  register: ufw_status
+  changed_when: false
+  failed_when: false
+
+- name: Check UFW rule VM
+  shell: ufw status | grep "192.168.0.0/16" | grep "22018"
+  register: ufw_vm
+  changed_when: false
+  failed_when: false
+
+- name: Check UFW rule Tailscale
+  shell: ufw status | grep "100.64.0.0/10" | grep "22018"
+  register: ufw_ts
+  changed_when: false
+  failed_when: false
+
+- name: Check UFW rule GCP
+  shell: ufw status | grep "10.20.0.0/16" | grep "22018"
+  register: ufw_gcp
+  changed_when: false
+  failed_when: false
+
+# -----------------------
+# BUILD REPORT
+# -----------------------
+
+- name: Append package result
+  set_fact:
+    cockpit_report: "{{ cockpit_report + [ 'package_installed : ' + ('PASSED' if cockpit_pkg.rc == 0 else 'FAILED') ] }}"
+    cockpit_failed: "{{ cockpit_failed + ( [] if cockpit_pkg.rc == 0 else ['package_installed'] ) }}"
+
+- name: Append service result
+  set_fact:
+    cockpit_report: "{{ cockpit_report + [ 'cockpit.socket    : ' + ('PASSED' if cockpit_status.stdout == 'active' else 'FAILED') ] }}"
+    cockpit_failed: "{{ cockpit_failed + ( [] if cockpit_status.stdout == 'active' else ['cockpit.socket'] ) }}"
+
+- name: Append port result
+  set_fact:
+    cockpit_report: "{{ cockpit_report + [ 'port_22018        : ' + ('PASSED' if cockpit_port.rc == 0 else 'FAILED') ] }}"
+    cockpit_failed: "{{ cockpit_failed + ( [] if cockpit_port.rc == 0 else ['port_22018'] ) }}"
+
+- name: Append UFW status
+  set_fact:
+    cockpit_report: "{{ cockpit_report + [ 'ufw_active        : ' + ('PASSED' if 'Status: active' in ufw_status.stdout else 'FAILED') ] }}"
+    cockpit_failed: "{{ cockpit_failed + ( [] if 'Status: active' in ufw_status.stdout else ['ufw_active'] ) }}"
+
+- name: Append UFW rules results
+  set_fact:
+    cockpit_report: "{{ cockpit_report + [
+      'ufw_vm_rule      : ' + ('PASSED' if ufw_vm.rc == 0 else 'FAILED'),
+      'ufw_ts_rule      : ' + ('PASSED' if ufw_ts.rc == 0 else 'FAILED'),
+      'ufw_gcp_rule     : ' + ('PASSED' if ufw_gcp.rc == 0 else 'FAILED')
+    ] }}"
+    cockpit_failed: "{{ cockpit_failed + (
+      [] +
+      ( [] if ufw_vm.rc == 0 else ['ufw_vm_rule'] ) +
+      ( [] if ufw_ts.rc == 0 else ['ufw_ts_rule'] ) +
+      ( [] if ufw_gcp.rc == 0 else ['ufw_gcp_rule'] )
+    ) }}"
+
+# -----------------------
+# SUMMARY
+# -----------------------
+
+- name: Show cockpit validation summary
+  debug:
+    msg: |
+      ==================================
+      COCKPIT VALIDATION SUMMARY
+      ==================================
+      {% for line in cockpit_report %}
+      {{ line }}
+      {% endfor %}
+      ----------------------------------
+      RESULT: {{
+        'ALL CHECKS PASSED'
+        if cockpit_failed | length == 0
+        else 'FAILED -> ' + (cockpit_failed | join(', '))
+      }}
+      ==================================
+
+- name: Fail if cockpit validation failed
+  fail:
+    msg: "Cockpit validation failed: {{ cockpit_failed | join(', ') }}"
+  when: cockpit_failed | length > 0

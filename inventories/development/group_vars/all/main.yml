@@ -1,0 +1,296 @@
+environment: development
+cockpit_bind_ip: "192.0.2.10"
+cockpit_port: 22018
+allow_tcp_forwarding: local
+permit_root_login: "no"
+password_auth: "no"
+allowed_ssh_networks:
+  - 198.51.100.0/24
+  - 203.0.113.0/24
+  - 192.0.2.0/24
+tailscale_authkey: "CHANGE_ME"
+# Usuario que tendrá acceso al grupo docker
+docker_user: ansible
+docker_version: ""
+docker_install_latest: True
+docker_hold_packages: true
+docker_run_hello_test: true
+#NODEJS
+nodejs_version: "24.13.1"
+# Forzar reinstalación limpia
+nodejs_force_install: true
+# Selección de gestor (solo uno puede ser true)
+nodejs_install_npm: true
+npm_version: ""        # "" | "latest" | "10.5.0"
+nodejs_install_pnpm: false
+pnpm_version: ""       # "" = latest
+#-------------------------
+# roles/infra_base/defaults/main.yml
+
+node_exporter_enabled: true
+
+node_exporter_version: "1.10.1"
+node_exporter_base_url: "https://github.com/prometheus/node_exporter/releases/download"
+
+node_exporter_install_path: "/usr/local/bin"
+node_exporter_service_name: "node_exporter"
+node_exporter_user: "ansible"
+
+node_exporter_bind_address: "0.0.0.0"
+node_exporter_port: 22036
+
+node_exporter_manage_firewall: true
+node_exporter_allowed_sources: 
+  - 192.0.2.0/24
+# NEW RELIC
+# roles/<role_name>/defaults/main.yml
+newrelic_enabled: true
+newrelic_required_packages:
+  - curl
+newrelic_install_script_url: "https://download.newrelic.com/install/newrelic-cli/scripts/install.sh"
+newrelic_cli_path: "/usr/local/bin/newrelic"
+newrelic_package_name: "newrelic-infra"
+newrelic_service_name: "newrelic-infra"
+newrelic_config_path: "/etc/newrelic-infra.yml"
+newrelic_api_key: "CHANGE_ME"
+newrelic_account_id: "CHANGE_ME"
+newrelic_region: "US"
+newrelic_install_tag: "device:example-host"
+newrelic_endpoint: "collector.newrelic.com"
+newrelic_port: 443
+newrelic_manage_firewall: false
+newrelic_allowed_sources: []
+#---------------
+# roles/infra_base/defaults/main.yml
+
+shell_zsh_enabled: true
+
+shell_zsh_user: "ansible"
+shell_zsh_user_home: "/home/{{ shell_zsh_user }}"
+
+shell_zsh_packages:
+  - zsh
+  - curl
+
+shell_zsh_zsh_path: "/usr/bin/zsh"
+
+shell_zsh_install_path: "/usr/local/bin"
+shell_zsh_binary_name: "oh-my-posh"
+
+shell_zsh_oh_my_posh_version: "latest"
+
+shell_zsh_oh_my_posh_url: >-
+  {% if shell_zsh_oh_my_posh_version == "latest" %}
+  https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-linux-amd64
+  {% else %}
+  https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/{{ shell_zsh_oh_my_posh_version }}/posh-linux-amd64
+  {% endif %}
+
+shell_zsh_theme_src: "{{ playbook_dir }}/assets/theme.omp.json"
+shell_zsh_theme_path: "{{ shell_zsh_user_home }}/.poshthemes/theme.omp.json"
+
+shell_zsh_extra_path: "$HOME/.local/bin"
+
+shell_zsh_history_size: 10000
+shell_zsh_save_history: 10000
+
+shell_zsh_enable_gcr_agent: true
+shell_zsh_enable_github_key_autoadd: true
+shell_zsh_github_key_path: "~/.ssh/github"
+
+shell_zsh_enable_nvm: true
+
+shell_zsh_commit_script_path: "/dir/gitMsgPerCommit.sh"
+
+shell_zsh_projects_root: "~/Documents/projects"
+shell_zsh_devtools_root: "~/Documents/projects/devtools"
+shell_zsh_devtools_scripts: "~/Documents/projects/devtools/scripts"
+
+shell_zsh_ansible_inventory: "~/Documents/projects/ansible/ansible/inventories/development"
+shell_zsh_ansible_playbook: "~/Documents/projects/ansible/ansible/playbooks/dev01.yml"
+shell_zsh_ansible_limit: "example-host"
+
+shell_zsh_ansible_alias_command: >-
+  ansible-playbook
+  -i {{ shell_zsh_ansible_inventory }}
+  {{ shell_zsh_ansible_playbook }}
+  --limit {{ shell_zsh_ansible_limit }}
+
+shell_zsh_custom_aliases: {}
+# UFW
+# roles/<role_name>/defaults/main.yml
+
+ufw_rules_enabled: true
+ufw_rules_manage_firewall: true
+
+ufw_rules_package_name: "ufw"
+ufw_rules_service_name: "ufw"
+
+ufw_rules:
+  # SSH
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 22000
+    from: 100.64.0.0/10
+    to: any
+    comment: "SSH from Tailscale"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 22000
+    from: 203.0.113.0/24
+    to: any
+    comment: "SSH from VCN"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 22000
+    from: 192.0.2.0/24
+    to: any
+    comment: "SSH from LAN"
+
+  # HTTP
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 80
+    from: 100.64.0.0/10
+    to: any
+    comment: "HTTP from Tailscale"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 80
+    from: 203.0.113.0/24
+    to: any
+    comment: "HTTP from VCN"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 80
+    from: 192.0.2.0/24
+    to: any
+    comment: "HTTP from LAN"
+
+  # HTTPS
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 443
+    from: 100.64.0.0/10
+    to: any
+    comment: "HTTPS from Tailscale"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 443
+    from: 203.0.113.0/24
+    to: any
+    comment: "HTTPS from VCN"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 443
+    from: 192.0.2.0/24
+    to: any
+    comment: "HTTPS from LAN"
+
+  - action: allow
+    direction: in
+    protocol: tcp
+    port: 22000
+    from: 203.0.113.0/24
+    to: any
+    comment: "SSH from Docker Coolify network"
+
+# coolify
+docker_enabled: true
+docker_package_name: docker.io
+docker_service_name: docker
+coolify_enabled: true
+coolify_install_script_url: https://cdn.coollabs.io/coolify/install.sh
+coolify_source_dir: /data/coolify/source
+coolify_container_name: coolify
+coolify_port: 22054
+coolify_container_internal_port: 8080
+coolify_validation_host: 127.0.0.1
+coolify_manage_firewall: false
+coolify_firewall_package: ufw
+coolify_allowed_sources:
+  - 192.0.2.0/24
+  - 203.0.113.0/24
+  - 198.51.100.0/24
+  - 203.0.113.0/24
+#SSH CUSTOM
+# roles/<role_name>/defaults/main.yml
+ssh_enabled: true
+ssh_package_name: "openssh-server"
+ssh_version: ""
+ssh_service_name: "ssh"
+ssh_config_directory: "/etc/ssh/sshd_config.d"
+ssh_custom_config_path: "/etc/ssh/sshd_config.d/10-custom.conf"
+ssh_custom_config_mode: "0644"
+ssh_bind_address: "0.0.0.0"
+ssh_port: 22000
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_pubkey_authentication: "yes"
+ssh_allowed_users:
+  - ansible
+ssh_max_auth_tries: 3
+ssh_login_grace_time: 30
+ssh_x11_forwarding: "no" #YES Para vscode remote ssh
+ssh_allow_tcp_forwarding: "yes" #YES Para vscode remote ssh
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 3
+ssh_manage_firewall: false
+ssh_firewall_package: "ufw"
+ssh_firewall_enable_command: "ufw --force enable"
+ssh_firewall_allow_command: "ufw allow"
+ssh_firewall_status_command: "ufw status"
+ssh_allowed_sources: []
+#FAIL2BAN
+fail2ban_enabled: true
+fail2ban_package_name: "fail2ban"
+fail2ban_service_name: "fail2ban"
+fail2ban_client_command: "fail2ban-client"
+fail2ban_version: ""
+fail2ban_install_path: "/etc/fail2ban"
+fail2ban_config_path: "/etc/fail2ban"
+fail2ban_backend: "systemd"
+fail2ban_bantime: -1
+fail2ban_findtime: 31536000
+fail2ban_maxretry: 2
+fail2ban_ignoreip:
+  - "127.0.0.1/8"
+  - "203.0.113.0/24"
+  - "192.0.2.0/24"
+  - "203.0.113.132"
+fail2ban_sshd_enabled: true
+fail2ban_sshd_port: "22000"
+fail2ban_sshd_logpath: "/var/log/auth.log"
+fail2ban_sshd_maxretry: 2
+fail2ban_manage_firewall: false
+fail2ban_firewall_package: "ufw"
+fail2ban_allowed_sources: []
+#GIT
+github_enabled: true
+github_package_name: "git"
+github_user: "ansible" #Linux user
+github_host: "github.com"
+github_ssh_port: 22000
+github_strict_host_key_checking: "yes"
+github_manage_firewall: false
+github_allowed_sources: []
+github_ssh_dir: "/home/{{ github_user }}/.ssh"
+github_ssh_private_key_path: "{{ github_ssh_dir }}/github_example"
+github_ssh_public_key_path: "{{ github_ssh_dir }}/github_example.pub"
+github_ssh_config_path: "{{ github_ssh_dir }}/config"
+github_known_hosts_path: "{{ github_ssh_dir }}/known_hosts"

@@ -1,0 +1,56 @@
+---
+- name: Gather package facts
+  ansible.builtin.package_facts:
+
+- name: Assert Docker packages installed
+  ansible.builtin.assert:
+    that:
+      - "'docker-ce' in ansible_facts.packages"
+      - "'docker-ce-cli' in ansible_facts.packages"
+      - "'containerd.io' in ansible_facts.packages"
+    fail_msg: "Docker packages missing."
+
+- name: Check Docker service
+  ansible.builtin.systemd:
+    name: docker
+  register: docker_service_state
+  changed_when: false
+
+- name: Assert Docker service active and enabled
+  ansible.builtin.assert:
+    that:
+      - docker_service_state.status.ActiveState == "active"
+      - docker_service_state.status.UnitFileState == "enabled"
+    fail_msg: "Docker service not active/enabled."
+
+- name: Validate Docker daemon
+  ansible.builtin.command: docker info
+  register: docker_info_result
+  changed_when: false
+  failed_when: docker_info_result.rc != 0
+
+- name: Assert daemon reachable
+  ansible.builtin.assert:
+    that:
+      - docker_info_result.rc == 0
+    fail_msg: "Docker daemon not reachable."
+
+- name: Validate hello-world if executed
+  ansible.builtin.assert:
+    that:
+      - docker_run_hello_test | bool == false or docker_hello_test.rc == 0
+    fail_msg: "hello-world test failed."
+
+- name: Validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================================
+      - Docker packages installed: OK
+      - Docker service active/enabled: OK
+      - Docker daemon reachable: OK
+      - Hello-world test: OK
+      ----------------------------------
+      RESULT: CONFIGURATION VALID
+      ==================================

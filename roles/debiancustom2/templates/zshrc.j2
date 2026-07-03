@@ -1,0 +1,97 @@
+# roles/infra_base/templates/zshrc.j2
+
+# Managed by Ansible
+
+export PATH="$PATH:{{ shell_zsh_extra_path }}"
+
+if command -v ip >/dev/null 2>&1; then
+  export OMP_LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
+fi
+
+HISTFILE=~/.zsh_history
+HISTSIZE={{ shell_zsh_history_size }}
+SAVEHIST={{ shell_zsh_save_history }}
+
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_REDUCE_BLANKS
+setopt HIST_VERIFY
+setopt APPEND_HISTORY
+setopt INC_APPEND_HISTORY
+setopt SHARE_HISTORY
+setopt EXTENDED_HISTORY
+setopt INC_APPEND_HISTORY_TIME
+
+function TRAPERR() {
+    if [[ -s $HISTFILE ]]; then
+        sed -i '$d' "$HISTFILE"
+        fc -R "$HISTFILE"
+    fi
+}
+
+autoload -Uz add-zsh-hook
+load-shared-history() {
+  fc -P
+  fc -p "$HISTFILE"
+}
+add-zsh-hook precmd load-shared-history
+
+{% if shell_zsh_enable_gcr_agent %}
+if [ -z "$SSH_AUTH_SOCK" ] && [ -S "$XDG_RUNTIME_DIR/gcr/ssh" ]; then
+    export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/gcr/ssh"
+fi
+{% endif %}
+
+{% if shell_zsh_enable_github_key_autoadd %}
+if [ -n "$SSH_AUTH_SOCK" ]; then
+    ssh-add -l >/dev/null 2>&1
+    if [ $? -eq 2 ]; then
+        ssh-add {{ shell_zsh_github_key_path }} 2>/dev/null
+    fi
+fi
+{% endif %}
+
+if [ -x /usr/bin/dircolors ]; then
+    eval "$(dircolors -b)"
+    alias ls='ls --color=auto'
+    alias dir='dir --color=auto'
+    alias vdir='vdir --color=auto'
+    alias grep='grep --color=auto'
+    alias fgrep='fgrep --color=auto'
+    alias egrep='egrep --color=auto'
+fi
+
+autoload -Uz compinit
+compinit
+
+{% if shell_zsh_enable_nvm %}
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+{% endif %}
+
+if [ -f /etc/profile ]; then
+  source /etc/profile
+fi
+
+alias lsa="ls -a"
+alias lss="ls -la -v --group-directories-first"
+alias lsd="ls -aR -1"
+alias c="clear"
+alias commit="bash {{ shell_zsh_commit_script_path }}"
+alias gt="git status"
+alias re="cd .."
+alias ho="cd ~"
+alias ga="git add ."
+alias gb="git branch -a"
+alias undo="git reset --soft HEAD~1"
+alias erase="git reset --hard HEAD~1"
+alias reset="git reset --hard HEAD"
+
+alias ansi="{{ shell_zsh_ansible_alias_command }}"
+
+{% for alias_name, alias_value in shell_zsh_custom_aliases.items() %}
+alias {{ alias_name }}="{{ alias_value }}"
+{% endfor %}
+
+eval "$({{ shell_zsh_install_path }}/{{ shell_zsh_binary_name }} init zsh --config {{ shell_zsh_theme_path }})"

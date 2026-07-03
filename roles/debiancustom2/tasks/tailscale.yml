@@ -1,0 +1,34 @@
+---
+- name: Install Tailscale using official script
+  shell: curl -fsSL https://tailscale.com/install.sh | sh
+  args:
+    creates: /usr/bin/tailscale
+  register: tailscale_install
+  changed_when: tailscale_install.rc == 0
+
+- name: Ensure tailscaled service is enabled and running
+  systemd:
+    name: tailscaled
+    enabled: yes
+    state: started
+  register: tailscale_service
+
+# Requiere variable:
+# tailscale_authkey: "tskey-xxxxxxxx"
+
+- name: Check current tailscale status
+  command: tailscale status --json
+  register: tailscale_status_pre
+  failed_when: false
+  changed_when: false
+
+- name: Bring up Tailscale (only if not authenticated)
+  command: >
+    tailscale up
+    --authkey={{ tailscale_authkey }}
+    --hostname={{ inventory_hostname }}
+    --ssh
+  when: tailscale_status_pre.rc != 0 or
+        "'Self'" not in tailscale_status_pre.stdout
+  register: tailscale_up
+  changed_when: tailscale_up.rc == 0

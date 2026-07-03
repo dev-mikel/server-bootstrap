@@ -1,0 +1,144 @@
+---
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Debian"
+      - ansible_distribution_major_version | int >= 12
+    fail_msg: "Unsupported OS. Debian 12+ required."
+
+- name: Define internal variables
+  ansible.builtin.set_fact:
+    docker_required_packages:
+      - ca-certificates
+      - curl
+      - gnupg
+    docker_base_packages:
+      - docker-ce
+      - docker-ce-cli
+    docker_extra_packages:
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    docker_repo_url: https://download.docker.com/linux/debian
+    docker_repo_components: stable
+    docker_keyring_dir: /etc/apt/keyrings
+    docker_keyring_file: /etc/apt/keyrings/docker.gpg
+    docker_codename: "{{ ansible_distribution_release }}"
+    docker_arch: "{{ ansible_architecture | replace('x86_64','amd64') }}"
+
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ docker_required_packages }}"
+    state: present
+    update_cache: true
+
+- name: Ensure keyring directory exists
+  ansible.builtin.file:
+    path: "{{ docker_keyring_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download Docker GPG key
+  ansible.builtin.get_url:
+    url: "{{ docker_repo_url }}/gpg"
+    dest: "{{ docker_keyring_file }}"
+    mode: "0644"
+
+- name: Configure Docker repository
+  ansible.builtin.apt_repository:
+    repo: >
+      deb [arch={{ docker_arch }} signed-by={{ docker_keyring_file }}]
+      {{ docker_repo_url }}
+      {{ docker_codename }}
+      {{ docker_repo_components }}
+    filename: docker
+    state: present
+
+- name: Build Docker package list with optional version pin
+  ansible.builtin.set_fact:
+    docker_packages_versioned: >-
+      {{
+        docker_base_packages
+        | map('regex_replace',
+              '^(.*)$',
+              '\\1' + (('=' + docker_version) if docker_version | length > 0 else '')
+        )
+        | list
+      }}
+
+- name: Install Docker (version pinned)
+  ansible.builtin.apt:
+    name: "{{ docker_packages_versioned + docker_extra_packages }}"
+    state: present
+    update_cache: true
+  when: docker_version | length > 0
+
+- name: Install Docker (latest)
+  ansible.builtin.apt:
+    name: "{{ docker_base_packages + docker_extra_packages }}"
+    state: latest
+    update_cache: true
+  when:
+    - docker_version | length == 0
+    - docker_install_latest | bool
+
+- name: Install Docker (present only)
+  ansible.builtin.apt:
+    name: "{{ docker_base_packages + docker_extra_packages }}"
+    state: present
+    update_cache: true
+  when:
+    - docker_version | length == 0
+    - not docker_install_latest | bool
+
+- name: Hold Docker packages if version pinned
+  ansible.builtin.command: apt-mark hold {{ item }}
+  loop: "{{ docker_base_packages + docker_extra_packages }}"
+  when:
+    - docker_version | length > 0
+    - docker_hold_packages | bool
+  changed_when: false
+
+- name: Ensure docker group exists
+  ansible.builtin.group:
+    name: docker
+    state: present
+
+- name: Check if docker user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ docker_user }}"
+  register: docker_user_lookup
+  failed_when: false
+  changed_when: false
+
+- name: Add user to docker group
+  ansible.builtin.user:
+    name: "{{ docker_user }}"
+    groups: docker
+    append: true
+
+- name: Ensure Docker service enabled and started
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Ensure Docker is not listening on TCP 2375
+  ansible.builtin.command: ss -lnt
+  register: docker_ports
+  changed_when: false
+
+- name: Assert Docker not publicly exposed
+  ansible.builtin.assert:
+    that:
+      - "'2375' not in docker_ports.stdout"
+    fail_msg: "Docker TCP 2375 exposed."
+    success_msg: "Docker not exposed via TCP."
+
+- name: Run hello-world test
+  ansible.builtin.command: docker run --rm hello-world
+  register: docker_hello_test
+  changed_when: false
+  failed_when: docker_hello_test.rc != 0
+  when: docker_run_hello_test | bool

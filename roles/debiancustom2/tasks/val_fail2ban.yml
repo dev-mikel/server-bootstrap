@@ -1,0 +1,81 @@
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Check fail2ban service status
+  ansible.builtin.set_fact:
+    service_status: >-
+      {{
+        (services[fail2ban_service_name + '.service'].state == 'running')
+        if (fail2ban_service_name + '.service') in services
+        else false
+      }}
+
+- name: Check if SSH port is listening
+  ansible.builtin.command: ss -tuln
+  register: fail2ban_ss_check
+  changed_when: false
+
+- name: Evaluate port listening
+  ansible.builtin.set_fact:
+    port_listening: "{{ fail2ban_sshd_port | string in fail2ban_ss_check.stdout }}"
+
+- name: Check fail2ban client status
+  ansible.builtin.command: "{{ fail2ban_client_command }} status"
+  register: fail2ban_client_status
+  changed_when: false
+  failed_when: false
+
+- name: Evaluate endpoint accessibility
+  ansible.builtin.set_fact:
+    endpoint_accessible: "{{ fail2ban_client_status.rc == 0 }}"
+
+- name: Check firewall rules when enabled
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+  failed_when: false
+  when: fail2ban_manage_firewall | bool
+
+- name: Evaluate network rule
+  ansible.builtin.set_fact:
+    network_rule: >-
+      {{
+        (fail2ban_allowed_sources | map('string') | list | difference(ufw_status.stdout_lines | default([])) | length == 0)
+        if fail2ban_manage_firewall | bool
+        else true
+      }}
+
+- name: Assert service running
+  ansible.builtin.assert:
+    that:
+      - service_status | bool
+
+- name: Assert port listening
+  ansible.builtin.assert:
+    that:
+      - port_listening | bool
+
+- name: Assert endpoint accessible
+  ansible.builtin.assert:
+    that:
+      - endpoint_accessible | bool
+
+- name: Assert network rule valid
+  ansible.builtin.assert:
+    that:
+      - network_rule | bool
+
+- name: Print validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================
+
+      service_status      : {{ service_status }}
+      port_listening      : {{ port_listening }}
+      endpoint_accessible : {{ endpoint_accessible }}
+      network_rule        : {{ network_rule }}
+      -----------------------------
+
+      # RESULT: CONFIGURATION VALID

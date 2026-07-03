@@ -1,0 +1,109 @@
+# roles/infra_base/tasks/val_node_exporter.yml
+
+- name: Initialize validation facts
+  set_fact:
+    service_status: "FAILED"
+    port_listening: "FAILED"
+    endpoint_accessible: "FAILED"
+    network_rule: "N/A"
+
+- name: Check service active state
+  command: systemctl is-active {{ node_exporter_service_name }}
+  register: node_exporter_service_active
+  changed_when: false
+  failed_when: false
+
+- name: Set service status fact
+  set_fact:
+    service_status: "{{ 'PASSED' if node_exporter_service_active.stdout == 'active' else 'FAILED' }}"
+
+- name: Check port listening
+  command: ss -tuln
+  register: node_exporter_ss
+  changed_when: false
+  failed_when: false
+
+- name: Set port listening fact
+  set_fact:
+    port_listening: >-
+      {{
+        'PASSED'
+        if (':' ~ node_exporter_port|string) in node_exporter_ss.stdout
+        else 'FAILED'
+      }}
+
+- name: Check endpoint accessibility
+  uri:
+    url: "http://{{ node_exporter_bind_address }}:{{ node_exporter_port }}/metrics"
+    method: GET
+    return_content: true
+  register: node_exporter_endpoint
+  failed_when: false
+  changed_when: false
+
+- name: Set endpoint accessibility fact
+  set_fact:
+    endpoint_accessible: >-
+      {{
+        'PASSED'
+        if (node_exporter_endpoint.status == 200 and
+            'node_cpu_seconds_total' in node_exporter_endpoint.content)
+        else 'FAILED'
+      }}
+
+- name: Validate firewall rules when managed
+  block:
+    - name: Check ufw status
+      command: ufw status
+      register: node_exporter_ufw
+      changed_when: false
+      failed_when: false
+
+    - name: Set network rule fact
+      set_fact:
+        network_rule: >-
+          {{
+            'PASSED'
+            if (node_exporter_port|string) in node_exporter_ufw.stdout
+            else 'FAILED'
+          }}
+  when: node_exporter_manage_firewall | bool
+
+- name: Set network rule to PASSED when firewall not managed
+  set_fact:
+    network_rule: "PASSED"
+  when: not node_exporter_manage_firewall | bool
+
+- name: Wait for node exporter to become active
+  command: systemctl is-active {{ node_exporter_service_name }}
+  register: node_exporter_wait
+  retries: 10
+  delay: 2
+  until: node_exporter_wait.stdout == "active"
+  changed_when: false
+  failed_when: false
+
+- name: Assert node exporter configuration validity
+  assert:
+    that:
+      - service_status == "PASSED"
+      - port_listening == "PASSED"
+      - endpoint_accessible == "PASSED"
+      - network_rule == "PASSED"
+    fail_msg: "Node Exporter validation failed"
+    success_msg: "Node Exporter validation passed"
+
+- name: Display validation summary
+  debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================
+
+      service_status      : {{ service_status }}
+      port_listening      : {{ port_listening }}
+      endpoint_accessible : {{ endpoint_accessible }}
+      network_rule        : {{ network_rule }}
+      -----------------------------
+
+      # RESULT: CONFIGURATION VALID

@@ -1,0 +1,101 @@
+---
+# --------------------------------------------------
+# Validate Docker service
+# --------------------------------------------------
+
+- name: Validate Docker service status
+  ansible.builtin.systemd:
+    name: "{{ docker_service_name }}"
+  register: docker_service_status
+
+- name: Assert Docker service active and enabled
+  ansible.builtin.assert:
+    that:
+      - docker_service_status.status.ActiveState == "active"
+      - docker_service_status.status.UnitFileState == "enabled"
+    fail_msg: "Docker service is not active and enabled"
+    success_msg: "Docker service is active and enabled"
+
+# --------------------------------------------------
+# Validate Coolify container existence
+# --------------------------------------------------
+
+- name: Check Coolify container exists
+  ansible.builtin.command: docker inspect {{ coolify_container_name }}
+  register: coolify_inspect_raw
+  changed_when: false
+  failed_when: coolify_inspect_raw.rc != 0
+
+- name: Parse Coolify inspect JSON
+  ansible.builtin.set_fact:
+    coolify_inspect: "{{ coolify_inspect_raw.stdout | from_json }}"
+
+# --------------------------------------------------
+# Validate container state
+# --------------------------------------------------
+
+- name: Assert Coolify container running
+  ansible.builtin.assert:
+    that:
+      - coolify_inspect[0].State.Running | bool
+    fail_msg: "Coolify container is not running"
+    success_msg: "Coolify container is running"
+
+- name: Assert Coolify container healthy
+  ansible.builtin.assert:
+    that:
+      - coolify_inspect[0].State.Health.Status == "healthy"
+    fail_msg: "Coolify container is not healthy"
+    success_msg: "Coolify container is healthy"
+
+# --------------------------------------------------
+# Extract host port using internal port key
+# --------------------------------------------------
+
+- name: Extract Coolify host port from internal port mapping
+  ansible.builtin.set_fact:
+    coolify_host_port: >-
+      {{
+        coolify_inspect[0].NetworkSettings.Ports[
+          coolify_container_internal_port ~ '/tcp'
+        ][0].HostPort | int
+      }}
+
+# --------------------------------------------------
+# Validate port correctness
+# --------------------------------------------------
+
+- name: Set port validation flag
+  ansible.builtin.set_fact:
+    port_correct: "{{ (coolify_host_port | int) == (coolify_port | int) }}"
+
+- name: Assert Coolify port configuration validity
+  ansible.builtin.assert:
+    that:
+      - port_correct
+    fail_msg: >
+      Coolify validation failed.
+      Expected host port {{ coolify_port }} (type={{ coolify_port | type_debug }}),
+      but container publishes {{ coolify_host_port }} (type={{ coolify_host_port | type_debug }}).
+    success_msg: >
+      Coolify validation successful.
+      Host port {{ coolify_host_port }} matches expected configuration.
+
+# --------------------------------------------------
+# Validation summary
+# --------------------------------------------------
+
+- name: Coolify validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      COOLIFY VALIDATION SUMMARY
+      ==================================
+      - Docker service: OK
+      - Container running: OK
+      - Container healthy: OK
+      - Published host port: {{ coolify_host_port }}
+      - Expected host port: {{ coolify_port }}
+      ----------------------------------
+      RESULT: CONFIGURATION VALID
+      ==================================

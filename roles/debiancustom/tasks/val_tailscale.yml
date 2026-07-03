@@ -1,0 +1,45 @@
+---
+- name: Gather tailscaled service status
+  systemd:
+    name: tailscaled
+  register: tailscale_service_status
+
+- name: Assert tailscaled is active
+  assert:
+    that:
+      - tailscale_service_status.status.ActiveState == "active"
+    fail_msg: "tailscaled service is not active"
+
+- name: Get tailscale status JSON
+  command: tailscale status --json
+  register: tailscale_status
+  changed_when: false
+
+- name: Parse tailscale status
+  set_fact:
+    tailscale_parsed: "{{ tailscale_status.stdout | from_json }}"
+
+- name: Assert backend state is running
+  assert:
+    that:
+      - tailscale_parsed.BackendState == "Running"
+    fail_msg: "Tailscale backend is not running"
+
+- name: Assert node is authenticated
+  assert:
+    that:
+      - tailscale_parsed.Self is defined
+    fail_msg: "Tailscale node is not authenticated"
+
+- name: Validation summary
+  debug:
+    msg: |
+      ==================================
+      TAILSCALE VALIDATION SUMMARY
+      ==================================
+      tailscaled.service : {{ 'PASSED' if tailscale_service_status.status.ActiveState == 'active' else 'FAILED' }}
+      backend_running    : {{ 'PASSED' if tailscale_parsed.BackendState == 'Running' else 'FAILED' }}
+      authenticated      : {{ 'PASSED' if tailscale_parsed.Self is defined else 'FAILED' }}
+      ----------------------------------
+      RESULT: ALL CHECKS PASSED
+      ==================================

@@ -1,0 +1,55 @@
+---
+- name: Check if IPv6 proc path exists
+  stat:
+    path: /proc/sys/net/ipv6
+  register: ipv6_proc
+
+- name: If IPv6 exists, check runtime sysctl
+  command: sysctl -n net.ipv6.conf.all.disable_ipv6
+  register: ipv6_all
+  changed_when: false
+  failed_when: false
+  when: ipv6_proc.stat.exists
+
+- name: Check GRUB configuration
+  command: grep -E '^GRUB_CMDLINE_LINUX=' /etc/default/grub
+  register: grub_file
+  changed_when: false
+
+- name: Check current kernel boot parameters
+  command: cat /proc/cmdline
+  register: kernel_cmdline
+  changed_when: false
+
+# ---- Assertions ----
+
+- name: Assert IPv6 disabled correctly
+  assert:
+    that:
+      - >
+        (not ipv6_proc.stat.exists)
+        or
+        (ipv6_all.stdout == "1")
+    fail_msg: "IPv6 still enabled at runtime level"
+
+- name: Assert GRUB configured
+  assert:
+    that:
+      - grub_file.stdout is search("ipv6.disable=1")
+    fail_msg: "GRUB not configured with ipv6.disable=1"
+
+# ---- Summary ----
+
+- name: IPv6 validation summary
+  debug:
+    msg: |
+      ==================================
+      IPV6 DISABLE VALIDATION SUMMARY
+      ==================================
+      kernel disabled     : {{ 'YES' if not ipv6_proc.stat.exists else 'NO (SYSCTL MODE)' }}
+      sysctl runtime      : {{ 'PASSED' if (not ipv6_proc.stat.exists) or (ipv6_all.stdout == '1') else 'FAILED' }}
+      grub configured     : {{ 'PASSED' if grub_file.stdout is search('ipv6.disable=1') else 'FAILED' }}
+      kernel boot active  : {{ 'ACTIVE' if kernel_cmdline.stdout is search('ipv6.disable=1') else 'PENDING REBOOT' }}
+      ----------------------------------
+      RESULT: CONFIGURATION VALID
+      ==================================

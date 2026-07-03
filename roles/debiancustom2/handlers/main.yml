@@ -1,0 +1,54 @@
+- name: Restart chrony
+  systemd:
+    name: chrony
+    state: restarted
+
+- name: Restart cockpit socket
+  systemd:
+    name: cockpit.socket
+    state: restarted
+    daemon_reload: yes
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: true
+
+- name: Restart node exporter
+  systemd:
+    name: "{{ node_exporter_service_name }}"
+    state: restarted
+
+- name: restart newrelic service
+  ansible.builtin.systemd:
+    name: "{{ newrelic_service_name }}"
+    state: restarted
+    daemon_reload: true
+
+- name: notify_shell_reload
+  ansible.builtin.debug:
+    msg: "Shell configuration updated. User must log out and log back in."
+
+- name: Reload UFW
+  ansible.builtin.command: ufw reload
+
+- name: Restart Docker
+  ansible.builtin.systemd:
+    name: "{{ docker_service_name }}"
+    state: restarted
+
+- name: Restart Coolify stack
+  ansible.builtin.shell: docker compose up -d
+  args:
+    chdir: "{{ coolify_source_dir }}"
+
+- name: Restart SSH service
+  ansible.builtin.systemd:
+    name: "{{ ssh_service_name }}"
+    state: restarted
+    daemon_reload: true
+
+- name: Restart fail2ban
+  ansible.builtin.systemd:
+    name: "{{ fail2ban_service_name }}"
+    state: restarted
+    daemon_reload: true

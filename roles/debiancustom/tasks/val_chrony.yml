@@ -1,0 +1,121 @@
+# ==========================================
+# CHRONY VALIDATION
+# ==========================================
+
+- name: Initialize validation state
+  set_fact:
+    failed_checks: []
+    chrony_service_status: "UNKNOWN"
+    chrony_sync_status: "UNKNOWN"
+    chrony_source_status: "UNKNOWN"
+
+# ==========================================
+# SERVICE CHECK
+# ==========================================
+
+- name: Check chrony service state
+  command: systemctl is-active chrony
+  register: chrony_service
+  changed_when: false
+  failed_when: false
+
+- name: Evaluate service status
+  set_fact:
+    chrony_service_status: "{{ 'PASSED' if chrony_service.stdout == 'active' else 'FAILED' }}"
+    failed_checks: "{{ failed_checks + ['chrony.service'] if chrony_service.stdout != 'active' else failed_checks }}"
+
+# ==========================================
+# WAIT FOR SYNCHRONIZATION (CONTROLLED)
+# ==========================================
+
+- name: Wait until chrony is synchronized
+  command: chronyc tracking
+  register: chrony_tracking_wait
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: >
+    chrony_tracking_wait.stdout is defined and
+    chrony_tracking_wait.stdout is search('Leap status.*Normal')
+  failed_when: false
+
+# ==========================================
+# TRACKING CHECK
+# ==========================================
+
+- name: Get chrony tracking status
+  command: chronyc tracking
+  register: chrony_tracking
+  changed_when: false
+  failed_when: false
+
+- name: Evaluate synchronization status
+  set_fact:
+    chrony_sync_status: >
+      {{ 'PASSED'
+         if chrony_tracking.stdout is defined
+         and chrony_tracking.stdout is search('Leap status.*Normal')
+         else 'FAILED' }}
+    failed_checks: >
+      {{ failed_checks + ['synchronization']
+         if chrony_tracking.stdout is not defined
+         or not (chrony_tracking.stdout is search('Leap status.*Normal'))
+         else failed_checks }}
+
+# ==========================================
+# SOURCE CHECK
+# ==========================================
+
+- name: Get chrony sources
+  command: chronyc sources
+  register: chrony_sources
+  changed_when: false
+  failed_when: false
+
+- name: Evaluate active NTP source
+  set_fact:
+    chrony_source_status: >
+      {{ 'PASSED'
+         if chrony_sources.stdout is defined
+         and chrony_sources.stdout is search('^\\*', multiline=True)
+         else 'FAILED' }}
+    failed_checks: >
+      {{ failed_checks + ['active_source']
+         if chrony_sources.stdout is not defined
+         or not (chrony_sources.stdout is search('^\\*', multiline=True))
+         else failed_checks }}
+
+# ==========================================
+# SUMMARY
+# ==========================================
+
+- name: Show chrony validation summary
+  debug:
+    msg: |
+      ==================================
+      CHRONY VALIDATION SUMMARY
+      ==================================
+      chrony.service   : {{ chrony_service_status }}
+      synchronization  : {{ chrony_sync_status }}
+      active_source    : {{ chrony_source_status }}
+      ----------------------------------
+      RESULT: {{
+        'ALL CHECKS PASSED'
+        if failed_checks | length == 0
+        else 'FAILED -> ' + (failed_checks | join(', '))
+      }}
+      ==================================
+
+# ==========================================
+# FAIL PLAYBOOK IF ANY CHECK FAILED
+# ==========================================
+
+- name: Fail if chrony validation failed
+  fail:
+    msg: |
+      ==================================
+      CHRONY VALIDATION FAILED
+      ==================================
+      Failed checks: {{ failed_checks | join(', ') }}
+      ==================================
+  when: failed_checks | length > 0

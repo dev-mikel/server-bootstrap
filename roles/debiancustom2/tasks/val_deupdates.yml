@@ -1,0 +1,54 @@
+---
+- name: Check unattended-upgrades package
+  command: dpkg -l unattended-upgrades
+  register: unattended_check
+  failed_when: false
+  changed_when: false
+
+- name: Get apt-daily timer status
+  systemd:
+    name: apt-daily.timer
+  register: apt_daily_timer
+
+- name: Get apt-daily-upgrade timer status
+  systemd:
+    name: apt-daily-upgrade.timer
+  register: apt_upgrade_timer
+
+- name: Check periodic config file
+  stat:
+    path: /etc/apt/apt.conf.d/10disable-periodic
+  register: periodic_file
+
+- name: Assert unattended-upgrades is removed
+  assert:
+    that:
+      - unattended_check.rc != 0
+    fail_msg: "unattended-upgrades is still installed"
+
+- name: Assert apt timers are disabled and masked
+  assert:
+    that:
+      - apt_daily_timer.status.UnitFileState == "masked"
+      - apt_upgrade_timer.status.UnitFileState == "masked"
+    fail_msg: "APT timers are not fully disabled/masked"
+
+- name: Assert periodic config exists
+  assert:
+    that:
+      - periodic_file.stat.exists
+    fail_msg: "APT periodic disable configuration missing"
+
+- name: Validation summary
+  debug:
+    msg: |
+      ==================================
+      APT AUTO-UPDATE DISABLE SUMMARY
+      ==================================
+      unattended-upgrades removed : {{ 'PASSED' if unattended_check.rc != 0 else 'FAILED' }}
+      apt-daily.timer masked      : {{ 'PASSED' if apt_daily_timer.status.UnitFileState == 'masked' else 'FAILED' }}
+      apt-daily-upgrade masked    : {{ 'PASSED' if apt_upgrade_timer.status.UnitFileState == 'masked' else 'FAILED' }}
+      periodic config present     : {{ 'PASSED' if periodic_file.stat.exists else 'FAILED' }}
+      ----------------------------------
+      RESULT: ALL CHECKS PASSED
+      ==================================

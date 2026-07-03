@@ -1,0 +1,231 @@
+# ==================================================
+# Ensure Docker is running
+# ==================================================
+
+- name: Ensure Docker service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ docker_service_name }}"
+    enabled: true
+    state: started
+  when: docker_enabled | bool
+
+
+# ==================================================
+# Detect Coolify installation state
+# ==================================================
+
+- name: Check if Coolify source directory exists
+  ansible.builtin.stat:
+    path: "{{ coolify_source_dir }}"
+  register: coolify_source_dir_stat
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Install Coolify if not present
+# ==================================================
+
+- name: Install Coolify using official installer
+  become: true
+  ansible.builtin.shell: >
+    curl -fsSL {{ coolify_install_script_url }} | bash
+  args:
+    creates: "{{ coolify_source_dir }}"
+  when:
+    - coolify_enabled | bool
+    - not coolify_source_dir_stat.stat.exists
+
+
+# ==================================================
+# Wait for compose file generation (CRITICAL)
+# ==================================================
+
+- name: Wait for docker-compose.yml to exist
+  ansible.builtin.wait_for:
+    path: "{{ coolify_source_dir }}/docker-compose.yml"
+    timeout: 120
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Ensure .env exists
+# ==================================================
+
+- name: Ensure Coolify .env file exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ coolify_source_dir }}/.env"
+    state: touch
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Configure APP_PORT
+# ==================================================
+
+- name: Ensure Coolify APP_PORT is configured
+  become: true
+  ansible.builtin.lineinfile:
+    path: "{{ coolify_source_dir }}/.env"
+    regexp: '^APP_PORT='
+    line: "APP_PORT={{ coolify_port }}"
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Wait for initial container creation
+# ==================================================
+
+- name: Wait until Coolify container exists
+  become: true
+  ansible.builtin.command:
+    cmd: docker inspect {{ coolify_container_name }}
+  register: coolify_exists_check
+  retries: 30
+  delay: 4
+  until: coolify_exists_check.rc == 0
+  changed_when: false
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Get fresh inspect data
+# ==================================================
+
+- name: Get Coolify container inspect data
+  become: true
+  ansible.builtin.command:
+    cmd: docker inspect {{ coolify_container_name }}
+  register: coolify_inspect_raw
+  changed_when: false
+  when: coolify_enabled | bool
+
+- name: Parse Coolify inspect JSON
+  ansible.builtin.set_fact:
+    coolify_inspect: "{{ coolify_inspect_raw.stdout | from_json }}"
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Extract current published host port safely
+# ==================================================
+
+- name: Extract current published host port
+  ansible.builtin.set_fact:
+    coolify_current_host_port: >-
+      {{
+        coolify_inspect[0].NetworkSettings.Ports[
+          coolify_container_internal_port ~ '/tcp'
+        ][0].HostPort | int
+      }}
+  when: coolify_enabled | bool
+
+- name: Recreate Coolify stack if port differs
+  become: true
+  ansible.builtin.shell: |
+    docker compose \
+      -f docker-compose.yml \
+      -f docker-compose.prod.yml \
+      down
+
+    docker compose \
+      -f docker-compose.yml \
+      -f docker-compose.prod.yml \
+      up -d
+  args:
+    chdir: "{{ coolify_source_dir }}"
+  when:
+    - coolify_enabled | bool
+    - coolify_current_host_port | int != coolify_port | int
+
+# ==================================================
+# Wait for container health
+# ==================================================
+
+- name: Wait until Coolify container is healthy
+  become: true
+  ansible.builtin.command:
+    cmd: docker inspect -f '{{"{{.State.Health.Status}}"}}' {{ coolify_container_name }}
+  register: coolify_health
+  retries: 40
+  delay: 5
+  until: coolify_health.stdout == "healthy"
+  changed_when: false
+  when: coolify_enabled | bool
+
+
+# ==================================================
+# Firewall (optional)
+# ==================================================
+
+- name: Ensure firewall package is installed when enabled
+  ansible.builtin.apt:
+    name: "{{ coolify_firewall_package }}"
+    state: present
+    update_cache: true
+  when:
+    - coolify_enabled | bool
+    - coolify_manage_firewall | bool
+
+- name: Allow Coolify port from allowed sources
+  ansible.builtin.command: >
+    ufw allow from {{ item }} to any port {{ coolify_port }} proto tcp
+  loop: "{{ coolify_allowed_sources }}"
+  when:
+    - coolify_enabled | bool
+    - coolify_manage_firewall | bool
+  changed_when: false
+  failed_when: false
+
+- name: Ensure UFW is enabled
+  ansible.builtin.command: ufw --force enable
+  when:
+    - coolify_enabled | bool
+    - coolify_manage_firewall | bool
+  changed_when: false
+  failed_when: false
+
+# ==================================================
+# Coolify self-SSH authorization
+# ==================================================
+
+- name: Find Coolify private SSH key
+  become: true
+  ansible.builtin.find:
+    paths: /data/coolify/ssh/keys
+    patterns: "ssh_key@*"
+    file_type: file
+  register: coolify_private_keys
+  when: coolify_enabled | bool
+
+
+- name: Generate Coolify public key from private key
+  become: true
+  ansible.builtin.command:
+    cmd: ssh-keygen -y -f {{ coolify_private_keys.files[0].path }}
+  register: coolify_public_key
+  changed_when: false
+  when:
+    - coolify_enabled | bool
+    - coolify_private_keys.matched > 0
+
+
+- name: Ensure docker user .ssh directory exists
+  become: true
+  ansible.builtin.file:
+    path: "/home/{{ docker_user }}/.ssh"
+    state: directory
+    owner: "{{ docker_user }}"
+    group: "{{ docker_user }}"
+    mode: '0700'
+
+
+- name: Authorize Coolify key on host for docker user
+  become: true
+  ansible.builtin.authorized_key:
+    user: "{{ docker_user }}"
+    key: "{{ coolify_public_key.stdout }}"
+    state: present
+  when:
+    - coolify_enabled | bool
+    - coolify_private_keys.matched > 0

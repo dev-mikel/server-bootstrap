@@ -1,0 +1,91 @@
+---
+# =========================================================
+# SERVICE VALIDATION
+# =========================================================
+
+- name: Gather service facts
+  service_facts:
+
+- name: Initialize validation structures
+  set_fact:
+    validation_report: []
+    validation_failed: []
+
+# -------------------------
+# SERVICES
+# -------------------------
+
+- name: Validate SSH
+  set_fact:
+    ssh_status: >-
+      {{
+        'PASS'
+        if 'ssh.service' in ansible_facts.services and
+           ansible_facts.services['ssh.service'].state == 'running'
+        else 'FAIL'
+      }}
+
+# =========================================================
+# PACKAGE VALIDATION
+# =========================================================
+
+- name: Define required packages
+  set_fact:
+    required_packages:
+      - openssh-server
+      - openssh-client
+      - git
+      - unzip
+      - curl
+      - ca-certificates
+      - gnupg
+      - nano
+      - locales-all
+      - tmux
+      - tree
+      - bpytop
+      - ufw
+
+- name: Check required packages
+  shell: dpkg -s {{ item }}
+  loop: "{{ required_packages }}"
+  register: pkg_check
+  changed_when: false
+  failed_when: false
+
+- name: Process package results
+  set_fact:
+    validation_report: "{{ validation_report + [
+      item.item.ljust(30) + ': ' +
+      ('INSTALLED' if item.rc == 0 else 'NOT INSTALLED')
+    ] }}"
+    validation_failed: "{{ validation_failed +
+      ([] if item.rc == 0 else [item.item])
+    }}"
+  loop: "{{ pkg_check.results }}"
+
+# =========================================================
+# SUMMARY
+# =========================================================
+
+- name: Show full validation summary
+  debug:
+    msg: |
+      ==================================
+      INFRASTRUCTURE VALIDATION SUMMARY
+      ==================================
+      {% for line in validation_report %}
+      {{ line }}
+      {% endfor %}
+      ----------------------------------
+      RESULT: {{
+        'ALL CHECKS PASSED'
+        if validation_failed | length == 0
+        else 'FAILED -> ' + (validation_failed | join(', '))
+      }}
+      ==================================
+
+- name: Fail if any validation failed
+  fail:
+    msg: "Validation failed: {{ validation_failed | join(', ') }}"
+  when: validation_failed | length > 0

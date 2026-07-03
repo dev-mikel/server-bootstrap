@@ -1,0 +1,63 @@
+# roles/infra_base/tasks/val_shell_zsh.yml
+
+- name: Initialize validation state
+  ansible.builtin.set_fact:
+    service_status: "configured"
+    port_listening: "not_applicable"
+    endpoint_accessible: "not_applicable"
+    network_rule: "not_applicable"
+
+- name: Validate default shell
+  ansible.builtin.command: "getent passwd {{ shell_zsh_user }}"
+  register: user_shell
+  changed_when: false
+
+- name: Assert zsh configured as default shell
+  ansible.builtin.assert:
+    that:
+      - shell_zsh_zsh_path in user_shell.stdout
+
+- name: Validate oh-my-posh binary
+  ansible.builtin.stat:
+    path: "{{ shell_zsh_install_path }}/{{ shell_zsh_binary_name }}"
+  register: omp_check
+
+- name: Assert oh-my-posh binary exists
+  ansible.builtin.assert:
+    that:
+      - omp_check.stat.exists
+
+- name: Validate theme file
+  ansible.builtin.stat:
+    path: "{{ shell_zsh_theme_path }}"
+  register: theme_check
+
+- name: Assert theme file exists
+  ansible.builtin.assert:
+    that:
+      - theme_check.stat.exists
+
+- name: Validate .zshrc exists
+  ansible.builtin.stat:
+    path: "{{ shell_zsh_user_home }}/.zshrc"
+  register: zshrc_check
+
+- name: Assert .zshrc exists
+  ansible.builtin.assert:
+    that:
+      - zshrc_check.stat.exists
+
+- name: Validation summary
+  ansible.builtin.debug:
+    msg: |
+      ==================================
+      VALIDATION SUMMARY
+      ==================
+
+      service_status      : {{ service_status }}
+      port_listening      : {{ port_listening }}
+      endpoint_accessible : {{ endpoint_accessible }}
+      network_rule        : {{ network_rule }}
+      -----------------------------
+
+      # RESULT: CONFIGURATION VALID

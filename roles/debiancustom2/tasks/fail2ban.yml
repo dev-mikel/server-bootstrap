@@ -1,0 +1,81 @@
+- name: Ensure fail2ban management is enabled
+  ansible.builtin.assert:
+    that:
+      - fail2ban_enabled is boolean
+    fail_msg: "fail2ban_enabled must be defined as boolean."
+
+- name: Install fail2ban package
+  ansible.builtin.apt:
+    name: "{{ fail2ban_package_name }}"
+    state: present
+    update_cache: true
+  when: fail2ban_enabled
+
+- name: Ensure fail2ban configuration directory exists
+  ansible.builtin.file:
+    path: "{{ fail2ban_config_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: fail2ban_enabled
+
+- name: Configure fail2ban main configuration
+  ansible.builtin.copy:
+    dest: "{{ fail2ban_config_path }}/jail.local"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [DEFAULT]
+      bantime  = {{ fail2ban_bantime }}
+      findtime = {{ fail2ban_findtime }}
+      maxretry = {{ fail2ban_maxretry }}
+      backend  = {{ fail2ban_backend }}
+      ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+
+      [sshd]
+      enabled = {{ fail2ban_sshd_enabled | lower }}
+      port    = {{ fail2ban_sshd_port }}
+      logpath = {{ fail2ban_sshd_logpath }}
+      maxretry = {{ fail2ban_sshd_maxretry }}
+  notify: Restart fail2ban
+  when: fail2ban_enabled
+
+- name: Ensure fail2ban service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ fail2ban_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: fail2ban_enabled
+
+- name: Configure optional firewall restrictions for SSH
+  when:
+    - fail2ban_enabled
+    - fail2ban_manage_firewall | bool
+  block:
+
+    - name: Ensure ufw is installed
+      ansible.builtin.apt:
+        name: "{{ fail2ban_firewall_package }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure ufw is enabled
+      ansible.builtin.ufw:
+        state: enabled
+
+    - name: Allow SSH from allowed sources
+      ansible.builtin.ufw:
+        rule: allow
+        port: "{{ fail2ban_sshd_port }}"
+        proto: tcp
+        src: "{{ item }}"
+      loop: "{{ fail2ban_allowed_sources }}"
+
+    - name: Deny SSH from others
+      ansible.builtin.ufw:
+        rule: deny
+        port: "{{ fail2ban_sshd_port }}"
+        proto: tcp
